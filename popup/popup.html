@@ -36,6 +36,49 @@
       <div id="sessions-list" class="sessions-list"></div>
     </div>
 
+    <!-- 邮箱模式切换 -->
+    <div id="mode-section" class="section">
+      <div class="section-header">
+        <h2>邮箱模式</h2>
+      </div>
+      <div class="mode-switch">
+        <label class="mode-option">
+          <input type="radio" name="email-mode" value="temp-email">
+          <span>临时邮箱 (自动验证码)</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="email-mode" value="gmail">
+          <span>Gmail 别名 (手动验证码)</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 临时邮箱配置 -->
+    <div id="temp-email-section" class="section temp-email-section" style="display: none;">
+      <div class="section-header">
+        <h2>临时邮箱配置</h2>
+      </div>
+      <div class="temp-email-config">
+        <div class="config-row">
+          <label>API 地址</label>
+          <input type="url" id="temp-api-url" placeholder="https://api.example.com" class="config-input">
+        </div>
+        <div class="config-row">
+          <label>Admin 密码</label>
+          <input type="password" id="temp-admin-password" placeholder="输入 Admin 密码" class="config-input">
+        </div>
+        <div class="config-row">
+          <label>邮箱域名</label>
+          <input type="text" id="temp-domain" placeholder="例如: awsl.uk" class="config-input">
+        </div>
+        <div class="config-actions">
+          <button id="temp-test-btn" class="btn-small">测试连接</button>
+          <button id="temp-save-btn" class="btn-small btn-small-primary">保存配置</button>
+        </div>
+        <p class="config-status" id="temp-config-status"></p>
+      </div>
+    </div>
+
     <!-- Gmail 配置区域 -->
     <div id="gmail-section" class="section gmail-section">
       <div class="section-header">

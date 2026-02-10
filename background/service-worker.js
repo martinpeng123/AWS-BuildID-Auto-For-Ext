@@ -4,11 +4,14 @@
  */
 
 import { GmailAliasClient } from '../lib/mail-api.js';
+import { TempEmailClient } from '../lib/temp-email-api.js';
 import { AWSDeviceAuth, validateToken, refreshAndValidateToken } from '../lib/oidc-api.js';
 import { generatePassword, generateName, generateEmailPrefix } from '../lib/utils.js';
 
-// Gmail 配置
+// 邮箱模式配置
+let emailMode = 'temp-email'; // 'temp-email' | 'gmail'
 let gmailBaseAddress = '';
+let tempEmailConfig = null;
 
 // ============== 全局状态 ==============
 
@@ -191,9 +194,12 @@ async function destroySession(sessionId) {
     }
   }
 
-  // Gmail 别名模式不需要删除邮箱
-  session.mailClient = null;
+  // 取消验证码轮询
+  if (session.mailClient && typeof session.mailClient.cancelPolling === 'function') {
+    session.mailClient.cancelPolling();
+  }
 
+  session.mailClient = null;
   sessions.delete(sessionId);
 }
 
@@ -241,28 +247,50 @@ async function runSessionRegistration(session) {
     session.lastName = lastName;
     session.password = password;
 
-    // 步骤 2: 生成 Gmail 别名邮箱
-    updateSession(session.id, { step: '生成邮箱别名...' });
-    
-    if (!gmailBaseAddress) {
-      throw new Error('未配置 Gmail 地址，请在插件设置中配置');
+    // 步骤 2: 创建邮箱（根据模式）
+    session.emailMode = emailMode;
+
+    if (emailMode === 'temp-email') {
+      updateSession(session.id, { step: '创建临时邮箱...' });
+
+      if (!tempEmailConfig) {
+        throw new Error('临时邮箱配置不完整');
+      }
+
+      session.mailClient = new TempEmailClient();
+      session.mailClient.configure(tempEmailConfig);
+
+      if (!session.mailClient.isConfigured()) {
+        throw new Error('临时邮箱配置无效');
+      }
+
+      const nameSuffix = `${firstName.toLowerCase()}${lastName.toLowerCase()}`.slice(0, 8);
+      const inboxResult = await session.mailClient.createInbox({ name: nameSuffix });
+      session.email = inboxResult.address;
+      session.jwt = inboxResult.jwt;
+      session.manualVerification = false;
+
+      console.log(`[Session ${session.id}] 临时邮箱创建成功:`, session.email);
+
+    } else {
+      updateSession(session.id, { step: '生成邮箱别名...' });
+
+      if (!gmailBaseAddress) {
+        throw new Error('未配置 Gmail 地址，请在插件设置中配置');
+      }
+
+      session.mailClient = new GmailAliasClient({ baseEmail: gmailBaseAddress });
+      const nameSuffix = `${firstName.toLowerCase()}${lastName.toLowerCase()}`.slice(0, 8);
+      const email = await session.mailClient.createInbox({
+        prefix: nameSuffix,
+        mode: 'auto'
+      });
+      session.email = email;
+      session.manualVerification = true;
     }
-    
-    session.mailClient = new GmailAliasClient({ baseEmail: gmailBaseAddress });
 
-    // 自动生成邮箱变体（+号/点号/大小写组合）
-    // 可选后缀包含姓名信息，便于识别
-    const nameSuffix = `${firstName.toLowerCase()}${lastName.toLowerCase()}`.slice(0, 8);
-
-    const email = await session.mailClient.createInbox({
-      prefix: nameSuffix,  // 可选的姓名后缀
-      mode: 'auto'         // 自动轮换变体方式
-    });
-    session.email = email;
-    session.manualVerification = true; // 标记需要手动输入验证码
-    updateSession(session.id, { email });
-
-    console.log(`[Session ${session.id}] 账号信息:`, { email, firstName, lastName });
+    updateSession(session.id, { email: session.email });
+    console.log(`[Session ${session.id}] 账号信息:`, { email: session.email, firstName, lastName });
 
     // 步骤 3: 获取 OIDC 授权 URL（使用 API 锁）
     updateSession(session.id, { step: '获取授权链接...' });
@@ -346,7 +374,20 @@ async function runSessionRegistration(session) {
       releaseLock();
     }
 
-    // 步骤 5: 轮询 Token
+    // 步骤 5: 临时邮箱模式下启动验证码轮询
+    if (session.emailMode === 'temp-email' && session.mailClient) {
+      updateSession(session.id, { step: '等待验证码...' });
+      session.codePollingPromise = session.mailClient.waitForVerificationCode()
+        .then(code => {
+          session.verificationCode = code;
+          console.log(`[Session ${session.id}] 验证码获取成功:`, code);
+        })
+        .catch(err => {
+          console.warn(`[Session ${session.id}] 验证码获取失败:`, err.message);
+        });
+    }
+
+    // 步骤 6: 轮询 Token
     session.status = 'polling_token';
     updateSession(session.id, { step: '自动填表中...' });
 
@@ -401,8 +442,13 @@ async function runSessionRegistration(session) {
       }
     }
 
-    // Gmail 别名模式不需要删除邮箱
+    // 取消验证码轮询并清理资源
+    if (session.mailClient && typeof session.mailClient.cancelPolling === 'function') {
+      session.mailClient.cancelPolling();
+    }
+    session.codePollingPromise = null;
     session.mailClient = null;
+    session.jwt = null;
   }
 }
 
@@ -607,18 +653,27 @@ async function validateAllTokens() {
 /**
  * 开始批量注册
  */
-async function startBatchRegistration(loopCount, concurrency, gmailAddress) {
+async function startBatchRegistration(options) {
+  const { loopCount, concurrency, emailMode: mode, gmailAddress, tempEmailConfig: tempConfig } = options;
+
   if (isRunning) {
     return { success: false, error: '已有注册任务在运行' };
   }
 
-  // 检查 Gmail 配置
-  if (!gmailAddress) {
-    return { success: false, error: '未配置 Gmail 地址' };
+  // 根据模式检查配置
+  emailMode = mode || 'temp-email';
+
+  if (emailMode === 'temp-email') {
+    if (!tempConfig || !tempConfig.apiUrl || !tempConfig.adminPassword || !tempConfig.domain) {
+      return { success: false, error: '临时邮箱配置不完整' };
+    }
+    tempEmailConfig = tempConfig;
+  } else {
+    if (!gmailAddress) {
+      return { success: false, error: '未配置 Gmail 地址' };
+    }
+    gmailBaseAddress = gmailAddress;
   }
-  
-  // 设置全局 Gmail 地址
-  gmailBaseAddress = gmailAddress;
 
   isRunning = true;
   shouldStop = false;
@@ -638,7 +693,7 @@ async function startBatchRegistration(loopCount, concurrency, gmailAddress) {
   sessions.clear();
   broadcastState();
 
-  console.log(`[Service Worker] 开始批量注册: 目标=${loopCount}, 并发=${concurrency}, Gmail=${gmailAddress}`);
+  console.log(`[Service Worker] 开始批量注册: 目标=${loopCount}, 并发=${concurrency}, 模式=${emailMode}`);
 
   // 创建任务队列
   taskQueue = [];
@@ -743,6 +798,11 @@ async function resetState() {
 
   await closeAllSessions();
 
+  // 重置模式配置
+  emailMode = 'temp-email';
+  gmailBaseAddress = '';
+  tempEmailConfig = null;
+
   globalState = {
     status: 'idle',
     step: '',
@@ -773,27 +833,46 @@ function findSessionByWindowId(windowId) {
 }
 
 /**
- * 获取验证码（Gmail 别名模式 - 等待用户手动输入）
+ * 获取验证码（支持临时邮箱和 Gmail 别名模式）
  */
 async function getVerificationCode(session) {
   if (!session) {
     return { success: false, error: '会话未初始化' };
   }
 
-  // Gmail 别名模式下，需要用户手动输入验证码
-  // 返回特殊标记，让 content script 知道需要等待用户输入
-  console.log(`[Session ${session.id}] Gmail 别名模式，等待用户手动输入验证码`);
-  
-  // 如果会话中已经有验证码（用户已输入），则返回
+  // 如果会话中已经有验证码，直接返回
   if (session.verificationCode) {
-    return { success: true, code: session.verificationCode };
+    console.log(`[Session ${session.id}] 返回已获取的验证码:`, session.verificationCode);
+    return { success: true, code: session.verificationCode, needManualInput: false };
   }
-  
-  // 返回需要手动输入的标记
-  return { 
-    success: false, 
-    needManualInput: true, 
-    error: '请从 Gmail 收件箱获取验证码并手动填写' 
+
+  // 临时邮箱模式：等待轮询结果
+  if (session.emailMode === 'temp-email') {
+    if (session.codePollingPromise) {
+      // 检查轮询是否已完成
+      try {
+        await Promise.race([
+          session.codePollingPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('check timeout')), 100))
+        ]);
+        // 如果到这里，说明轮询已完成
+        if (session.verificationCode) {
+          return { success: true, code: session.verificationCode, needManualInput: false };
+        }
+      } catch (e) {
+        // 轮询还在进行中
+      }
+    }
+    console.log(`[Session ${session.id}] 临时邮箱模式，验证码轮询中...`);
+    return { success: false, needManualInput: false, polling: true, error: '验证码获取中...' };
+  }
+
+  // Gmail 别名模式：需要用户手动输入
+  console.log(`[Session ${session.id}] Gmail 别名模式，等待用户手动输入验证码`);
+  return {
+    success: false,
+    needManualInput: true,
+    error: '请从 Gmail 收件箱获取验证码并手动填写'
   };
 }
 
@@ -819,8 +898,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'START_BATCH_REGISTRATION':
-      startBatchRegistration(message.loopCount || 1, message.concurrency || 1, message.gmailAddress)
-        .then(sendResponse);
+      startBatchRegistration({
+        loopCount: message.loopCount || 1,
+        concurrency: message.concurrency || 1,
+        emailMode: message.emailMode,
+        gmailAddress: message.gmailAddress,
+        tempEmailConfig: message.tempEmailConfig
+      }).then(sendResponse);
       return true;
 
     case 'STOP_REGISTRATION':

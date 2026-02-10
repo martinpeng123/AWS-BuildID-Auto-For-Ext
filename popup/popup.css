@@ -796,3 +796,99 @@ body {
   font-weight: 600;
   color: #28a745;
 }
+
+/* 模式切换 */
+.mode-switch {
+  display: flex;
+  gap: 12px;
+}
+
+.mode-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 12px;
+}
+
+.mode-option:hover {
+  border-color: #bbb;
+}
+
+.mode-option:has(input:checked) {
+  border-color: #007bff;
+  background: #f0f7ff;
+}
+
+.mode-option input {
+  margin: 0;
+}
+
+/* 临时邮箱配置 */
+.temp-email-section {
+  background: #fff8e6;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ffe4a0;
+}
+
+.temp-email-config {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-row label {
+  font-size: 11px;
+  color: #666;
+  font-weight: 500;
+}
+
+.config-input {
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+}
+
+.config-input:focus {
+  outline: none;
+  border-color: #ff9900;
+  box-shadow: 0 0 0 2px rgba(255, 153, 0, 0.1);
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.config-status {
+  font-size: 11px;
+  margin: 4px 0 0;
+  min-height: 16px;
+}
+
+.config-status.success {
+  color: #28a745;
+}
+
+.config-status.error {
+  color: #dc3545;
+}
+
+.config-status.info {
+  color: #007bff;
+}

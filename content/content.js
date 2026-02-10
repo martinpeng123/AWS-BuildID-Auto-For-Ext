@@ -347,32 +347,37 @@
   }
 
   /**
-   * 获取验证码（Gmail 别名模式 - 等待用户手动输入）
+   * 获取验证码（支持临时邮箱自动获取和 Gmail 手动输入）
    */
   async function getVerificationCode() {
     if (verificationCode) {
-      return verificationCode;
+      return { code: verificationCode, needManualInput: false };
     }
-
-    updateStep('请手动填写验证码（从 Gmail 收件箱获取）');
 
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_VERIFICATION_CODE' });
-      if (response && response.success) {
+
+      if (response && response.success && response.code) {
         verificationCode = response.code;
         console.log('[Content Script] 获取到验证码:', verificationCode);
-        return verificationCode;
+        return { code: verificationCode, needManualInput: false };
       }
-      
+
+      // 临时邮箱模式，正在轮询中
+      if (response && response.polling) {
+        console.log('[Content Script] 临时邮箱模式，验证码轮询中...');
+        return { code: null, needManualInput: false, polling: true };
+      }
+
       // Gmail 别名模式，需要用户手动输入
       if (response && response.needManualInput) {
         console.log('[Content Script] Gmail 别名模式，等待用户手动输入验证码');
-        return null; // 返回 null 表示需要手动输入
+        return { code: null, needManualInput: true };
       }
     } catch (e) {
       console.error('[Content Script] 获取验证码失败:', e);
     }
-    return null;
+    return { code: null, needManualInput: true };
   }
 
   /**
@@ -551,42 +556,54 @@
   }
 
   /**
-   * 处理验证码页（Gmail 别名模式 - 用户手动输入）
+   * 处理验证码页（支持自动填写和手动输入）
    */
   async function handleVerifyPage() {
-    updateStep('请手动填写验证码');
+    updateStep('获取验证码...');
 
-    const code = await getVerificationCode();
-    
-    // Gmail 别名模式下，code 为 null，需要用户手动输入
-    if (!code) {
-      // 显示提示，等待用户手动输入
-      updateStep('📧 请从 Gmail 收件箱获取验证码并手动填写');
-      
-      // 不自动填写，让用户手动输入
-      // 但仍然标记这个页面已经被处理过（避免重复提示）
-      console.log('[Content Script] Gmail 别名模式，等待用户手动输入验证码');
-      
-      // 返回 true 表示已处理（提示用户），避免重复处理
-      // 用户手动填写后会自动点击按钮或按 Enter
-      return true;
+    // 轮询获取验证码，最多等待 3 分钟
+    const maxAttempts = 60;
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      const result = await getVerificationCode();
+
+      // 有验证码，自动填写
+      if (result.code) {
+        updateStep(`填写验证码: ${result.code}`);
+        const codeInput = $('input[placeholder*="位数"], input[placeholder*="digit" i], input[type="text"][maxlength="6"], input[name="code"], input[name="otp"]');
+        if (!codeInput) {
+          console.log('[Content Script] 找不到验证码输入框');
+          return false;
+        }
+
+        fastFill(codeInput, result.code);
+        await sleep(300);
+
+        updateStep('点击验证...');
+        const btn = $('button[data-testid="email-verification-verify-button"], button[type="submit"], button.awsui-button-variant-primary');
+        if (btn) fastClick(btn);
+
+        return true;
+      }
+
+      // Gmail 模式，需要用户手动输入
+      if (result.needManualInput) {
+        updateStep('请从 Gmail 收件箱获取验证码并手动填写');
+        console.log('[Content Script] Gmail 别名模式，等待用户手动输入验证码');
+        return true;
+      }
+
+      // 临时邮箱模式，正在轮询中
+      if (result.polling) {
+        updateStep(`等待验证码... (${attempts + 1}/${maxAttempts})`);
+      }
+
+      attempts++;
+      await sleep(3000);
     }
 
-    // 如果有验证码（从其他来源获取），则自动填写
-    updateStep(`填写验证码: ${code}`);
-    const codeInput = $('input[placeholder*="位数"], input[placeholder*="digit" i], input[type="text"][maxlength="6"], input[name="code"], input[name="otp"]');
-    if (!codeInput) {
-      console.log('[Content Script] 找不到验证码输入框');
-      return false;
-    }
-
-    fastFill(codeInput, code);
-    await sleep(200);
-
-    updateStep('点击验证...');
-    const btn = $('button[data-testid="email-verification-verify-button"], button[type="submit"], button.awsui-button-variant-primary');
-    if (btn) fastClick(btn);
-
+    updateStep('验证码获取超时，请手动输入');
     return true;
   }
 

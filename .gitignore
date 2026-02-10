@@ -33,3 +33,4 @@ vscode-extension/
 
 # CI/CD
 .gitea/
+.ace-tool/

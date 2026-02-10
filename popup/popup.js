@@ -41,6 +41,16 @@ const validateText = document.getElementById('validate-text');
 const gmailAddressInput = document.getElementById('gmail-address');
 const gmailSaveBtn = document.getElementById('gmail-save-btn');
 const gmailStatus = document.getElementById('gmail-status');
+const gmailSection = document.getElementById('gmail-section');
+
+// 临时邮箱配置元素
+const tempEmailSection = document.getElementById('temp-email-section');
+const tempApiUrlInput = document.getElementById('temp-api-url');
+const tempAdminPasswordInput = document.getElementById('temp-admin-password');
+const tempDomainInput = document.getElementById('temp-domain');
+const tempTestBtn = document.getElementById('temp-test-btn');
+const tempSaveBtn = document.getElementById('temp-save-btn');
+const tempConfigStatus = document.getElementById('temp-config-status');
 
 // Token Pool 元素
 const poolApiKeyInput = document.getElementById('pool-api-key');
@@ -54,6 +64,10 @@ const poolPoints = document.getElementById('pool-points');
 
 // Gmail 配置
 let gmailAddress = '';
+
+// 邮箱模式配置
+let emailMode = 'temp-email'; // 'temp-email' | 'gmail'
+let tempEmailConfig = null;
 
 // Token Pool 配置
 const POOL_API_URL = 'http://localhost:8080';
@@ -163,6 +177,19 @@ function updateUI(state) {
 }
 
 /**
+ * 转义 HTML 特殊字符，防止 XSS
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * 渲染并发会话列表
  */
 function renderSessions(sessions) {
@@ -174,9 +201,9 @@ function renderSessions(sessions) {
     return `
       <div class="session-item">
         <span class="session-id">#${index + 1}</span>
-        <span class="session-status ${statusClass}"></span>
-        <span class="session-step">${session.step || session.status}</span>
-        <span class="session-email">${session.email || ''}</span>
+        <span class="session-status ${escapeHtml(statusClass)}"></span>
+        <span class="session-step">${escapeHtml(session.step || session.status)}</span>
+        <span class="session-email">${escapeHtml(session.email || '')}</span>
       </div>
     `;
   }).join('');
@@ -217,19 +244,23 @@ function renderHistory(history) {
         error: '错误',
         unknown: '未验证'
       };
-      tokenBadge = `<span class="token-badge ${item.tokenStatus}">${badgeLabels[item.tokenStatus] || item.tokenStatus}</span>`;
+      tokenBadge = `<span class="token-badge ${escapeHtml(item.tokenStatus)}">${escapeHtml(badgeLabels[item.tokenStatus] || item.tokenStatus)}</span>`;
     }
 
+    const escapedId = escapeHtml(String(item.id));
+    const escapedEmail = escapeHtml(item.email || '-');
+    const escapedTime = escapeHtml(item.time || '');
+
     return `
-    <div class="history-item" data-id="${item.id}">
-      <div class="history-status ${statusClass}"></div>
+    <div class="history-item" data-id="${escapedId}">
+      <div class="history-status ${escapeHtml(statusClass)}"></div>
       <div class="history-info">
-        <div class="history-email">${item.email || '-'}${tokenBadge}</div>
-        <div class="history-time">${item.time || ''}</div>
+        <div class="history-email">${escapedEmail}${tokenBadge}</div>
+        <div class="history-time">${escapedTime}</div>
       </div>
       <div class="history-actions">
-        ${item.success && item.token ? `<button class="kiro-btn" data-id="${item.id}" title="同步至 Kiro IDE">Kiro</button>` : ''}
-        <button class="copy-btn-record" data-id="${item.id}">复制</button>
+        ${item.success && item.token ? `<button class="kiro-btn" data-id="${escapedId}" title="同步至 Kiro IDE">Kiro</button>` : ''}
+        <button class="copy-btn-record" data-id="${escapedId}">复制</button>
       </div>
     </div>
   `;
@@ -398,11 +429,19 @@ async function startRegistration() {
   const loopCount = parseInt(loopCountInput.value) || 1;
   const concurrency = parseInt(concurrencyInput.value) || 1;
 
-  // 检查 Gmail 是否已配置
-  if (!gmailAddress) {
-    alert('请先配置 Gmail 地址');
-    gmailAddressInput.focus();
-    return;
+  // 根据模式检查配置
+  if (emailMode === 'temp-email') {
+    if (!tempEmailConfig || !tempEmailConfig.apiUrl || !tempEmailConfig.adminPassword || !tempEmailConfig.domain) {
+      alert('请先完成临时邮箱配置');
+      tempApiUrlInput.focus();
+      return;
+    }
+  } else {
+    if (!gmailAddress) {
+      alert('请先配置 Gmail 地址');
+      gmailAddressInput.focus();
+      return;
+    }
   }
 
   // 验证输入
@@ -416,7 +455,7 @@ async function startRegistration() {
   }
 
   // Gmail 别名模式建议并发为 1
-  if (concurrency > 1) {
+  if (emailMode === 'gmail' && concurrency > 1) {
     const confirm = window.confirm('使用 Gmail 别名模式时，建议并发设为 1（需要手动输入验证码）。\n\n是否继续？');
     if (!confirm) return;
   }
@@ -428,7 +467,9 @@ async function startRegistration() {
       type: 'START_BATCH_REGISTRATION',
       loopCount,
       concurrency,
-      gmailAddress  // 传递 Gmail 地址
+      emailMode,
+      gmailAddress,
+      tempEmailConfig
     });
     console.log('[Popup] 注册响应:', response);
 
@@ -712,6 +753,154 @@ function updateGmailStatus(saved) {
   }
 }
 
+// ==================== 邮箱模式切换 ====================
+
+/**
+ * 加载邮箱模式配置
+ */
+async function loadEmailModeConfig() {
+  try {
+    const result = await chrome.storage.local.get(['emailMode', 'tempEmailConfig']);
+    emailMode = result.emailMode || 'temp-email';
+    tempEmailConfig = result.tempEmailConfig || null;
+
+    // 设置单选按钮
+    const radio = document.querySelector(`input[name="email-mode"][value="${emailMode}"]`);
+    if (radio) radio.checked = true;
+
+    // 更新 UI 显示
+    updateModeUI(emailMode);
+
+    // 填充临时邮箱配置
+    if (tempEmailConfig) {
+      tempApiUrlInput.value = tempEmailConfig.apiUrl || '';
+      tempAdminPasswordInput.value = tempEmailConfig.adminPassword || '';
+      tempDomainInput.value = tempEmailConfig.domain || '';
+      updateTempConfigStatus('已配置', 'success');
+    }
+  } catch (error) {
+    console.error('[EmailMode] 加载配置错误:', error);
+  }
+}
+
+/**
+ * 更新模式 UI 显示
+ */
+function updateModeUI(mode) {
+  tempEmailSection.style.display = mode === 'temp-email' ? 'block' : 'none';
+  gmailSection.style.display = mode === 'gmail' ? 'block' : 'none';
+}
+
+/**
+ * 更新临时邮箱配置状态
+ */
+function updateTempConfigStatus(message, type) {
+  tempConfigStatus.textContent = message;
+  tempConfigStatus.className = `config-status ${type}`;
+}
+
+/**
+ * 保存临时邮箱配置
+ */
+async function saveTempEmailConfig() {
+  const config = {
+    apiUrl: tempApiUrlInput.value.trim().replace(/\/$/, ''),
+    adminPassword: tempAdminPasswordInput.value,
+    domain: tempDomainInput.value.trim().toLowerCase()
+  };
+
+  if (!config.apiUrl || !config.adminPassword || !config.domain) {
+    updateTempConfigStatus('请填写所有配置项', 'error');
+    return;
+  }
+
+  // 验证 URL 格式
+  try {
+    const url = new URL(config.apiUrl);
+    if (url.protocol !== 'https:') {
+      updateTempConfigStatus('API URL 必须使用 HTTPS', 'error');
+      return;
+    }
+    config.apiUrl = url.origin;
+  } catch (e) {
+    updateTempConfigStatus('API URL 格式无效', 'error');
+    return;
+  }
+
+  // 验证 domain 格式
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(config.domain)) {
+    updateTempConfigStatus('域名格式无效 (例如: awsl.uk)', 'error');
+    return;
+  }
+
+  try {
+    tempEmailConfig = config;
+    await chrome.storage.local.set({ tempEmailConfig: config });
+    updateTempConfigStatus('配置已保存', 'success');
+  } catch (error) {
+    console.error('[TempEmail] 保存配置错误:', error);
+    updateTempConfigStatus('保存失败: ' + error.message, 'error');
+  }
+}
+
+/**
+ * 测试临时邮箱连接
+ */
+async function testTempEmailConnection() {
+  let apiUrl = tempApiUrlInput.value.trim().replace(/\/$/, '');
+  const adminPassword = tempAdminPasswordInput.value;
+  const domain = tempDomainInput.value.trim();
+
+  if (!apiUrl || !adminPassword || !domain) {
+    updateTempConfigStatus('请先填写配置', 'error');
+    return;
+  }
+
+  // 强制 HTTPS 校验
+  try {
+    const url = new URL(apiUrl);
+    if (url.protocol !== 'https:') {
+      updateTempConfigStatus('API URL 必须使用 HTTPS', 'error');
+      return;
+    }
+    apiUrl = url.origin;
+  } catch (e) {
+    updateTempConfigStatus('API URL 格式无效', 'error');
+    return;
+  }
+
+  updateTempConfigStatus('测试连接中...', 'info');
+  tempTestBtn.disabled = true;
+
+  try {
+    const response = await fetch(`${apiUrl}/admin/new_address`, {
+      method: 'POST',
+      headers: {
+        'x-admin-auth': adminPassword,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        enablePrefix: true,
+        name: `test_${Date.now()}`,
+        domain: domain
+      })
+    });
+
+    if (response.ok) {
+      updateTempConfigStatus('连接成功 (已创建测试邮箱)', 'success');
+    } else if (response.status === 401 || response.status === 403) {
+      updateTempConfigStatus('Admin 密码错误', 'error');
+    } else {
+      const errorText = await response.text().catch(() => '');
+      updateTempConfigStatus(`错误: ${response.status} ${errorText.slice(0, 50)}`, 'error');
+    }
+  } catch (e) {
+    updateTempConfigStatus(`网络错误: ${e.message}`, 'error');
+  } finally {
+    tempTestBtn.disabled = false;
+  }
+}
+
 // ==================== Token Pool 功能 ====================
 
 /**
@@ -903,6 +1092,9 @@ async function init() {
   // 加载 Gmail 配置
   await loadGmailConfig();
 
+  // 加载邮箱模式配置
+  await loadEmailModeConfig();
+
   // 加载 Token Pool 配置
   await loadPoolConfig();
 
@@ -929,6 +1121,19 @@ async function init() {
       saveGmailConfig();
     }
   });
+
+  // 邮箱模式切换事件
+  document.querySelectorAll('input[name="email-mode"]').forEach(radio => {
+    radio.addEventListener('change', async (e) => {
+      emailMode = e.target.value;
+      await chrome.storage.local.set({ emailMode });
+      updateModeUI(emailMode);
+    });
+  });
+
+  // 临时邮箱配置事件
+  tempSaveBtn.addEventListener('click', saveTempEmailConfig);
+  tempTestBtn.addEventListener('click', testTempEmailConnection);
 
   // Token Pool 事件
   poolConnectBtn.addEventListener('click', connectToPool);
