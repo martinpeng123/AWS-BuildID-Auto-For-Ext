@@ -1,0 +1,33 @@
+{
+  "review_summary": {
+    "target": "background/service-worker.js",
+    "result": "PASSED",
+    "score": 95
+  },
+  "analysis": {
+    "maintainability": {
+      "rating": "Excellent",
+      "details": "The implementation uses a clear state machine pattern for the authentication flow. Helper functions (`waitForAuthCompleted`, `resolveAuthCompleted`, `cancelAuthWait`) effectively encapsulate the complexity of the asynchronous wait logic, keeping the main `runSessionRegistration` function clean and readable."
+    },
+    "pattern_consistency": {
+      "rating": "Excellent",
+      "details": "The code adheres strictly to the existing style, including variable naming, promise handling, and the use of the global `sessions` map. The integration of the new `AUTH_COMPLETED` message handler fits naturally into the existing switch-case structure."
+    },
+    "integration_impact": {
+      "rating": "Safe",
+      "details": "The logic includes robust cleanup mechanisms (`cleanupAuthWait`) invoked in `finally` blocks and cancellation handlers. This prevents memory leaks (dangling timers) and stuck states if the process is interrupted or the window is closed manually."
+    }
+  },
+  "key_findings": [
+    "Correct implementation of the Deferred/Promise-based wait pattern.",
+    "Proper handling of edge cases: timeout, user cancellation (window close), and manual stop.",
+    "State updates are correctly broadcasted to the UI."
+  ],
+  "recommendations": [
+    {
+      "type": "Refactoring",
+      "priority": "Low",
+      "description": "In `createSession`, the flat structure is getting large. Consider grouping the 4 new auth-related properties into a nested `authWaitContext` object for better organization."
+    }
+  ]
+}
