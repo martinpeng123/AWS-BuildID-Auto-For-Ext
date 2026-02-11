@@ -152,7 +152,7 @@ function createSession() {
   const sessionId = generateSessionId();
   const session = {
     id: sessionId,
-    status: 'pending', // pending, running, polling_token, completed, error
+    status: 'pending', // pending, running, waiting_auth, polling_token, completed, error
     step: '等待中...',
     error: null,
     // 账号信息
@@ -172,7 +172,13 @@ function createSession() {
     // Token 结果
     token: null,
     // 轮询控制
-    pollAbort: false
+    pollAbort: false,
+    // 授权等待状态
+    authState: 'pending',
+    authCompletedPromise: null,
+    authCompletedResolve: null,
+    authCompletedReject: null,
+    authCompletedTimeout: null
   };
   sessions.set(sessionId, session);
   return session;
@@ -184,6 +190,9 @@ function createSession() {
 async function destroySession(sessionId) {
   const session = sessions.get(sessionId);
   if (!session) return;
+
+  // 清理授权等待
+  cleanupAuthWait(session);
 
   // 关闭窗口
   if (session.windowId) {
@@ -228,6 +237,99 @@ async function withApiLock(fn) {
     await new Promise(resolve => setTimeout(resolve, 500));
     releaseLock();
   }
+}
+
+// ============== 授权等待管理 ==============
+
+/**
+ * 等待授权完成信号
+ * - 支持事件先到（completed 状态立即返回）
+ * - 支持取消先到（cancelled/timeout 状态立即 reject）
+ * - 缓存 Promise 避免重复调用覆盖回调
+ */
+function waitForAuthCompleted(session) {
+  // 已完成，立即返回
+  if (session.authState === 'completed') {
+    return Promise.resolve();
+  }
+
+  // 已取消/超时，立即 reject
+  if (session.authState === 'cancelled') {
+    return Promise.reject(new Error('授权已取消'));
+  }
+  if (session.authState === 'timeout') {
+    return Promise.reject(new Error('授权已超时'));
+  }
+
+  // 复用已有 Promise（避免重复调用覆盖回调）
+  if (session.authCompletedPromise) {
+    return session.authCompletedPromise;
+  }
+
+  const expiresIn = session.oidcAuth?.expiresIn || 600;
+  const timeout = Math.min(expiresIn * 1000, 600000);
+
+  session.authCompletedPromise = new Promise((resolve, reject) => {
+    session.authCompletedResolve = resolve;
+    session.authCompletedReject = reject;
+
+    session.authCompletedTimeout = setTimeout(() => {
+      if (session.authState === 'pending') {
+        session.authState = 'timeout';
+        cleanupAuthWait(session);
+        reject(new Error('等待授权超时'));
+      }
+    }, timeout);
+  });
+
+  return session.authCompletedPromise;
+}
+
+/**
+ * 触发授权完成（幂等）
+ */
+function resolveAuthCompleted(session) {
+  if (!session || session.authState !== 'pending') {
+    return;
+  }
+
+  session.authState = 'completed';
+
+  if (session.authCompletedResolve) {
+    session.authCompletedResolve();
+  }
+
+  cleanupAuthWait(session);
+}
+
+/**
+ * 取消授权等待
+ */
+function cancelAuthWait(session, reason = '授权被取消') {
+  if (!session || session.authState !== 'pending') {
+    return;
+  }
+
+  session.authState = 'cancelled';
+
+  if (session.authCompletedReject) {
+    session.authCompletedReject(new Error(reason));
+  }
+
+  cleanupAuthWait(session);
+}
+
+/**
+ * 清理授权等待资源
+ */
+function cleanupAuthWait(session) {
+  if (session.authCompletedTimeout) {
+    clearTimeout(session.authCompletedTimeout);
+    session.authCompletedTimeout = null;
+  }
+  session.authCompletedPromise = null;
+  session.authCompletedResolve = null;
+  session.authCompletedReject = null;
 }
 
 /**
@@ -387,6 +489,16 @@ async function runSessionRegistration(session) {
         });
     }
 
+    // 步骤 5.5: 等待授权完成
+    session.status = 'waiting_auth';
+    updateSession(session.id, { step: '等待用户授权...' });
+
+    await waitForAuthCompleted(session);
+
+    if (shouldStop || session.pollAbort) {
+      throw new Error('注册已停止');
+    }
+
     // 步骤 6: 轮询 Token
     session.status = 'polling_token';
     updateSession(session.id, { step: '自动填表中...' });
@@ -432,6 +544,9 @@ async function runSessionRegistration(session) {
 
     return false;
   } finally {
+    // 清理授权等待资源
+    cleanupAuthWait(session);
+
     // 关闭窗口
     if (session.windowId) {
       try {
@@ -507,7 +622,8 @@ function saveToHistory(session, success) {
     success: success,
     error: success ? null : session.error,
     token: tokenInfo,
-    tokenStatus: success ? 'unknown' : null // unknown, valid, invalid, suspended
+    tokenStatus: success ? 'unknown' : null,
+    machineId: session.oidcAuth?.deviceCode || ''
   };
 
   registrationHistory.unshift(record);
@@ -783,9 +899,10 @@ function stopRegistration() {
   shouldStop = true;
   taskQueue = [];
 
-  // 中断所有会话的轮询
+  // 中断所有会话的轮询和授权等待
   for (const session of sessions.values()) {
     session.pollAbort = true;
+    cancelAuthWait(session, '用户停止注册');
   }
 
   updateGlobalState({ step: '正在停止...' });
@@ -971,7 +1088,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'AUTH_COMPLETED':
       if (session) {
-        updateSession(session.id, { step: '授权完成，等待 Token...' });
+        resolveAuthCompleted(session);
+        updateSession(session.id, { step: '授权完成，开始获取 Token...' });
       }
       sendResponse({ success: true });
       break;
@@ -1036,6 +1154,7 @@ chrome.windows.onRemoved.addListener((windowId) => {
   const session = findSessionByWindowId(windowId);
   if (session) {
     console.log(`[Service Worker] 会话 ${session.id} 的窗口已关闭`);
+    cancelAuthWait(session, '授权窗口已关闭');
     session.windowId = null;
     session.tabId = null;
   }
