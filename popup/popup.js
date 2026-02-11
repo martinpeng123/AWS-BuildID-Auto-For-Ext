@@ -392,15 +392,23 @@ echo "已同步至 Kiro IDE"`;
 }
 
 /**
- * 复制记录
+ * 复制记录（JSON 格式）
  */
 async function copyRecord(id) {
-  const response = await chrome.runtime.sendMessage({ type: 'EXPORT_HISTORY' });
-  const record = response.history?.find(r => String(r.id) === String(id));
-  if (record) {
-    const text = `邮箱: ${record.email}\n密码: ${record.password}\n姓名: ${record.firstName} ${record.lastName}\nToken: ${record.token?.accessToken || '无'}`;
-    await navigator.clipboard.writeText(text);
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'EXPORT_HISTORY' });
+    const record = response?.history?.find(r => String(r.id) === String(id));
+    if (!record) {
+      alert('找不到该记录');
+      return;
+    }
+    const exportData = mapRecordToExport(record);
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    await navigator.clipboard.writeText(jsonStr);
     alert('已复制到剪贴板');
+  } catch (err) {
+    console.error('[Popup] 复制失败:', err);
+    alert('复制失败: ' + err.message);
   }
 }
 
