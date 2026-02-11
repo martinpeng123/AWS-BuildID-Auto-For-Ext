@@ -499,6 +499,9 @@ function saveToHistory(session, success) {
     time: new Date().toLocaleString(),
     email: session.email,
     password: session.password,
+    label: session.firstName + ' ' + session.lastName,
+    provider: "BuilderId",
+    region: "us-east-1",
     firstName: session.firstName,
     lastName: session.lastName,
     success: success,
@@ -547,7 +550,7 @@ async function validateAllTokens() {
   chrome.runtime.sendMessage({
     type: 'VALIDATION_PROGRESS',
     progress: { validated: 0, total: results.total }
-  }).catch(() => {});
+  }).catch(() => { });
 
   for (let i = 0; i < recordsToValidate.length; i += concurrency) {
     const batch = recordsToValidate.slice(i, i + concurrency);
@@ -584,41 +587,41 @@ async function validateAllTokens() {
     for (const promiseResult of batchResults) {
       if (promiseResult.status === 'fulfilled') {
         const { result } = promiseResult.value;
-        
+
         switch (result.status) {
           case 'valid':
             results.valid++;
             break;
           case 'suspended':
             results.suspended++;
-            results.details.push({ 
-              email: promiseResult.value.record.email, 
-              status: 'suspended', 
-              error: result.error 
+            results.details.push({
+              email: promiseResult.value.record.email,
+              status: 'suspended',
+              error: result.error
             });
             break;
           case 'expired':
             results.expired++;
-            results.details.push({ 
-              email: promiseResult.value.record.email, 
-              status: 'expired', 
-              error: result.error 
+            results.details.push({
+              email: promiseResult.value.record.email,
+              status: 'expired',
+              error: result.error
             });
             break;
           case 'invalid':
             results.invalid++;
-            results.details.push({ 
-              email: promiseResult.value.record.email, 
-              status: 'invalid', 
-              error: result.error 
+            results.details.push({
+              email: promiseResult.value.record.email,
+              status: 'invalid',
+              error: result.error
             });
             break;
           case 'error':
             results.error++;
-            results.details.push({ 
-              email: promiseResult.value.record.email, 
-              status: 'error', 
-              error: result.error 
+            results.details.push({
+              email: promiseResult.value.record.email,
+              status: 'error',
+              error: result.error
             });
             break;
         }
@@ -633,7 +636,7 @@ async function validateAllTokens() {
     chrome.runtime.sendMessage({
       type: 'VALIDATION_PROGRESS',
       progress: { validated, total: results.total }
-    }).catch(() => {});
+    }).catch(() => { });
 
     // 批次间延迟，避免限流
     if (i + concurrency < recordsToValidate.length) {

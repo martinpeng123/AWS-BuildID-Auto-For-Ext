@@ -291,7 +291,7 @@ historyList.addEventListener('click', async (e) => {
 function detectOS() {
   const platform = navigator.platform.toLowerCase();
   const userAgent = navigator.userAgent.toLowerCase();
-  
+
   if (platform.includes('win') || userAgent.includes('windows')) {
     return 'windows';
   } else if (platform.includes('mac') || userAgent.includes('macintosh')) {
@@ -361,7 +361,7 @@ async function syncToKiro(id) {
       // 转义 JSON 中的特殊字符用于 PowerShell
       const authTokenEscaped = authToken.replace(/'/g, "''");
       const clientInfoEscaped = clientInfo.replace(/'/g, "''");
-      
+
       command = `$ssoDir = "$env:USERPROFILE\\.aws\\sso\\cache"
 if (!(Test-Path $ssoDir)) { New-Item -ItemType Directory -Force -Path $ssoDir | Out-Null }
 @'
@@ -517,6 +517,56 @@ async function reset() {
 }
 
 /**
+ * 生成导出文件名
+ * 格式: yyyyMMddHHmmss-XXXXXX[-seq].json
+ */
+let lastExportSecond = 0;
+let exportSeq = 0;
+
+function generateFilename() {
+  const now = new Date();
+
+  const timestamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0')
+  ].join('');
+
+  const randomSuffix = String(Math.floor(Math.random() * 900000) + 100000);
+
+  const currentSecond = Math.floor(now.getTime() / 1000);
+  if (currentSecond === lastExportSecond) {
+    exportSeq++;
+  } else {
+    lastExportSecond = currentSecond;
+    exportSeq = 0;
+  }
+
+  const seqSuffix = exportSeq > 0 ? `-${exportSeq}` : '';
+  return `${timestamp}-${randomSuffix}${seqSuffix}.json`;
+}
+
+/**
+ * 将历史记录映射为导出格式
+ */
+function mapRecordToExport(record) {
+  return {
+    email: record.email || '',
+    provider: record.provider || 'BuilderId',
+    accessToken: record.token?.accessToken || '',
+    refreshToken: record.token?.refreshToken || '',
+    clientId: record.token?.clientId || '',
+    clientSecret: record.token?.clientSecret || '',
+    region: record.region || 'us-east-1',
+    label: record.label || `${record.firstName || ''} ${record.lastName || ''}`.trim(),
+    machineId: record.machineId || ''
+  };
+}
+
+/**
  * 导出历史 (JSON) - 只导出有效的 Token
  */
 async function exportHistory() {
@@ -545,22 +595,19 @@ async function exportHistory() {
       return;
     }
 
-    // 生成 JSON 格式（与原项目一致，只包含 Token 信息）
-    const jsonData = validRecords.map(r => ({
-      clientId: r.token?.clientId || '',
-      clientSecret: r.token?.clientSecret || '',
-      accessToken: r.token?.accessToken || '',
-      refreshToken: r.token?.refreshToken || ''
-    }));
-
+    // 生成新的 JSON 格式（使用辅助函数）
+    const jsonData = validRecords.map(mapRecordToExport);
     const jsonStr = JSON.stringify(jsonData, null, 2);
+
+    // 生成文件名（使用辅助函数）
+    const filename = generateFilename();
 
     // 下载 JSON
     const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `accounts-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
 
@@ -572,6 +619,7 @@ async function exportHistory() {
 
   } catch (error) {
     console.error('[Popup] 导出错误:', error);
+    alert('导出失败: ' + error.message);
   }
 }
 
@@ -715,20 +763,20 @@ async function loadGmailConfig() {
  */
 async function saveGmailConfig() {
   const email = gmailAddressInput.value.trim();
-  
+
   if (!email) {
     gmailStatus.textContent = '请输入邮箱地址';
     gmailStatus.classList.add('error');
     return;
   }
-  
+
   // 验证邮箱格式
   if (!email.includes('@')) {
     gmailStatus.textContent = '邮箱格式无效';
     gmailStatus.classList.add('error');
     return;
   }
-  
+
   try {
     gmailAddress = email;
     await chrome.storage.local.set({ gmailAddress: email });

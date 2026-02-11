@@ -4,7 +4,7 @@
  * 包含右上角实时进度 Toast
  */
 
-(function() {
+(function () {
   'use strict';
 
   console.log('[Content Script] 已加载，当前 URL:', window.location.href);
@@ -303,7 +303,7 @@
    */
   function updateStep(step) {
     console.log('[Content Script]', step);
-    chrome.runtime.sendMessage({ type: 'UPDATE_STEP', step }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'UPDATE_STEP', step }).catch(() => { });
     // 同时更新本地 Toast
     showToast({ step, status: 'initializing' });
   }
@@ -313,7 +313,7 @@
    */
   function reportError(error) {
     console.error('[Content Script] 错误:', error);
-    chrome.runtime.sendMessage({ type: 'REPORT_ERROR', error }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'REPORT_ERROR', error }).catch(() => { });
   }
 
   /**
@@ -356,7 +356,7 @@
 
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_VERIFICATION_CODE' });
-
+      console.log(response);
       if (response && response.success && response.code) {
         verificationCode = response.code;
         console.log('[Content Script] 获取到验证码:', verificationCode);
@@ -386,18 +386,18 @@
   function fastFill(el, text) {
     // 聚焦
     el.focus();
-    
+
     // 直接设置值
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     nativeInputValueSetter.call(el, text);
-    
+
     // 触发所有必要的事件
     const events = [
       new Event('input', { bubbles: true, cancelable: true }),
       new Event('change', { bubbles: true, cancelable: true }),
       new Event('blur', { bubbles: true, cancelable: true })
     ];
-    
+
     events.forEach(event => el.dispatchEvent(event));
   }
 
@@ -406,12 +406,12 @@
    */
   function fastClick(btn) {
     if (!btn) return false;
-    
+
     // 确保按钮可见且可点击
     if (btn.offsetParent === null || btn.disabled) {
       return false;
     }
-    
+
     // 触发点击
     btn.click();
     return true;
@@ -628,12 +628,12 @@
     }
 
     fastFill(pwdInput, info.password);
-    
+
     if (confirmInput) {
       await sleep(100);
       fastFill(confirmInput, info.password);
     }
-    
+
     await sleep(200);
 
     updateStep('点击继续...');
@@ -681,7 +681,7 @@
     const btn = $('button#cli_login_button, button[data-testid="allow-access-button"], input[type="submit"][value*="Allow"]');
     if (btn && fastClick(btn)) {
       updateStep('已允许访问，等待完成...');
-      chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => { });
       return true;
     }
 
@@ -691,7 +691,7 @@
       const text = b.textContent || b.value || '';
       if (text.includes('Allow') && fastClick(b)) {
         updateStep('已允许访问，等待完成...');
-        chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => { });
         return true;
       }
     }
@@ -705,7 +705,7 @@
    */
   function handleCompletePage() {
     updateStep('授权完成！');
-    chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'AUTH_COMPLETED' }).catch(() => { });
     return true;
   }
 

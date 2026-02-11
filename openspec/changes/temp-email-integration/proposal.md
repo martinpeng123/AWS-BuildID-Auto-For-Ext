@@ -217,11 +217,15 @@ Response:
   }
 ```
 
-### 查询邮件
+### 查询邮件 (Admin API)
 ```http
-GET /api/mails?limit=10&offset=0
+GET /admin/mails?limit=20&offset=0&address=xxx@awsl.uk
 Headers:
-  Authorization: Bearer <jwt_token>
+  x-admin-auth: <admin_password>
+Query Parameters:
+  - limit: 返回邮件数量 (默认 20)
+  - offset: 偏移量 (默认 0)
+  - address: 可选，过滤特定邮箱地址
 Response:
   [
     {
